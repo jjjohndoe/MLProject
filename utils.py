@@ -1,7 +1,10 @@
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import NearestNeighbors
+from sklearn.ensemble import BaggingClassifier
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
 
 CONTRACTIONS = { 
     "ain't": "are not",
@@ -482,7 +485,7 @@ SLANGS = {'2day': 'today',
     'zzz': 'sleeping'
     }
 
-PARAMETERS_RF= {
+PARAMETERS_TREES = {
     "max_features" : ["sqrt", "log2"], 
     "criterion": ["gini", "entropy"],
     "min_samples_leaf": [2, 4],

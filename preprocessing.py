@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 import numpy as np
 from os import remove
+import argparse
 
 # Text libraries 
 import regex as re
@@ -19,10 +20,12 @@ from emot.emo_unicode import EMOTICONS_EMO
 from utils import SLANGS, CONTRACTIONS, STOPWORDS
 
 # Import classifier
-from utils import MODELS, MODEL_NAMES, PARAMETERS_RF
-from sklearn.model_selection import GridSearchCV
+from utils import MODELS, MODEL_NAMES, PARAMETERS_TREES
+from sklearn.model_selection import ParameterGrid
 from sklearn.metrics import f1_score
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.tree import DecisionTreeClassifier
+
 
 
 # Resampling 
@@ -52,14 +55,25 @@ def resampling(X_train, y_train):
 
 
 
-def tuning_classifiers(clf, parameters_grid, X_train, y_train, k_fold = 3) -> None:
+def tuning_classifiers(clf, parameters_grid, X_train, y_train, X_val, y_val):
     print("Starting tuning classifiers")
-    # Tune classifiers with Halving Search CV if "normal_grid_search" is false otherwise use Grid Search CV
-    
-    for params in parameters_grid:
-        clf = RandomForestClassifier(**params)
+
+    f1_scores = list()
+    parameters_grid = ParameterGrid(parameters_grid)
+
+    for config in parameters_grid:
+        clf = RandomForestClassifier(**config)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_val)
+
+        f1 = f1_score(y_val, y_pred, average = "macro")
+        f1_scores.append(f1)
+    
+    print(f"Max f1 score: {max(f1_scores)}\n\n")
+    best_config = list(parameters_grid)[np.argmax(np.array(f1_scores))]
+    print(f"Best configuration: {best_config}")
+
+    return best_config
         
 
     #
@@ -108,7 +122,7 @@ def test_models(X_train : pd.DataFrame, y_train : pd.Series, X_val : pd.DataFram
 
 
 
-def add_word_embeddings(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame) -> tuple([pd.DataFrame, pd.DataFrame]):
+def add_word_embeddings(X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame) -> tuple([pd.DataFrame, pd.DataFrame]):
     """Add the word embeddings scores to the development and evaluation set, based on the vocabolary of the training set.
     Parameters
     ----------
@@ -135,39 +149,35 @@ def add_word_embeddings(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.Da
     
     
     # Create features 
-    scores_dev = []
-    scores_eval = []
-    output = []
+    scores_train = []
+    scores_val = []
+
 
     for text in X_train["text"]:
         prediction = model.predict(text, k=3)
-        scores_dev.append(map(lambda x : x[1], sorted(zip(prediction[0],prediction[1]), key=lambda x : x[0])))
+        scores_train.append(map(lambda x : x[1], sorted(zip(prediction[0],prediction[1]), key=lambda x : x[0])))
         
 
-    for text in X_test["text"]:
+    for text in X_val["text"]:
         prediction = model.predict(text, k=3)
-        scores_eval.append(map(lambda x : x[1], sorted(zip(prediction[0],prediction[1]), key=lambda x : x[0])))
-        idx = np.argmax(prediction[1])
-        output.append(int(prediction[0][idx][-1]))
-        #print(output)
+        scores_val.append(map(lambda x : x[1], sorted(zip(prediction[0],prediction[1]), key=lambda x : x[0])))
+      
 
-    y_pred = pd.DataFrame(output, columns=["out"])
-    f1 = f1_score(y_val, y_pred,  average='macro')
-    print(f"PREDICTION!!!!!!! NN = {f1}")
 
     new_features_names= ["embedding_negativity", "embedding_positivity", "embedding_neutr"]
-    scores_dev = pd.DataFrame(scores_dev, columns=new_features_names)
-    scores_eval = pd.DataFrame(scores_eval, columns=new_features_names)
+
+    scores_train = pd.DataFrame(scores_train, columns=new_features_names)
+    scores_val = pd.DataFrame(scores_val, columns=new_features_names)
+
     
+    X_train = pd.concat([X_train, scores_train], axis=1)
+    X_val = pd.concat([X_val, scores_val], axis=1)
     
-    X_train = pd.concat([X_train, scores_dev], axis=1)
-    X_test = pd.concat([X_test, scores_eval], axis=1)
-
-    return X_train, X_test
+    return X_train, X_val
 
 
 
-def text_tf_idf(X_train: pd.DataFrame, X_test: pd.DataFrame, min_df=0.05) -> tuple([pd.DataFrame, pd.DataFrame]):
+def text_tf_idf(X_train: pd.DataFrame, X_test: pd.DataFrame, min_df=0.01) -> tuple([pd.DataFrame, pd.DataFrame]):
     """Applies the tf-df to the text feature of the train and the evaluation set
     Parameters
     ----------
@@ -185,14 +195,12 @@ def text_tf_idf(X_train: pd.DataFrame, X_test: pd.DataFrame, min_df=0.05) -> tup
     
     vectorizer = TfidfVectorizer(strip_accents="ascii", stop_words = STOPWORDS, use_idf=False, min_df=min_df)
     vectorizer.fit(X_train["text"])
-
     train_tfdf = pd.DataFrame(vectorizer.transform(X_train["text"]).toarray(), columns=vectorizer.get_feature_names())
     test_tfdf = pd.DataFrame(vectorizer.transform(X_test["text"]).toarray(), columns=vectorizer.get_feature_names())
 
-    # Concat features obtained by TF-IDF with the original DataFrame
+    # Concat features obtained by TF-DF with the original DataFrame
     X_train = pd.concat([X_train.reset_index(drop=True),train_tfdf.reset_index(drop=True)], axis=1)
-    X_test = pd.concat([X_test.reset_index(drop=True),test_tfdf.reset_index(drop=True)], axis = 1)
-
+    X_test = pd.concat([X_test.reset_index(drop=True),test_tfdf.reset_index(drop=True)], axis = 1) 
     return X_train, X_test
 
 
@@ -330,11 +338,16 @@ def pre_processing():
     return df
 
 
-if __name__ == "__main__":
-    use_bert = True
+def main(params): 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--use_bert', type=int, default=False, help='Use BERT features')
+    args = parser.parse_args(params)
+
+    use_bert = bool(args.use_bert)
     df = pre_processing()
 
     if use_bert: 
+        print("Use BERT features")
         bert_out_df = pd.read_csv("data/bert_out.csv", index_col= 0)
         df = pd.concat([df, bert_out_df], axis = 1)
 
@@ -364,32 +377,61 @@ if __name__ == "__main__":
     
 
     # Apply TF-IDF
-    X_train, X_val = text_tf_idf(X_train, X_val, min_df=0.01)
+    X_train_test, X_val_test = text_tf_idf(X_train= X_train, X_test = X_val, min_df=0.03)
 
     
     if use_bert == False: 
         # Apply FastTextAI 
-        X_train, X_val = add_word_embeddings(X_train, y_train, X_val)
+        X_train_test, X_val_test = add_word_embeddings(X_train_test, y_train, X_val_test)
 
     # R
     #X_train, y_train = resampling(X_train, y_train)
 
-    X_train = X_train.drop(columns=["text"])
-    X_val = X_val.drop(columns=["text"])
+    # X_train_1 = X_train.drop(columns=["text"])
+    # X_val = X_val.drop(columns=["text"])
 
-    X = pd.concat([X_train, X_val], axis=0) #.drop(columns=["text"])
-    y = pd.concat([y_train, y_val], axis=0)
+    X_train_test = X_train_test.drop(columns=["text"])
+    X_val_test = X_val_test.drop(columns=["text"])
+    
+    results = test_models(X_train_test, y_train, X_val_test, y_val)
 
-    results = test_models(X_train, y_train, X_val, y_val)
 
     print("Start tuning")
 
-    clf = RandomForestClassifier()
-    tuning_classifiers(clf, PARAMETERS_RF, X, y, k_fold = 3)
+    clf_1 = RandomForestClassifier()
+    best_config_RF = tuning_classifiers(clf_1, PARAMETERS_TREES, X_train_test, y_train, X_val_test, y_val)
 
+    clf_2 = DecisionTreeClassifier()
+    best_config_DT = tuning_classifiers(clf_2, PARAMETERS_TREES, X_train_test, y_train,X_val_test, y_val)
 
-    # Apply BERT 
+    if use_bert:
+        print("BERT is not the best pretrained model so I decide not to choose it.")
+    else:
 
+        # Train on 80% of the data and then test on the test dataset 
+        X = pd.concat([X_train, X_val], axis=0) 
+        y = pd.concat([y_train, y_val], axis=0)
 
+        X, X_test = text_tf_idf(X_train= X, X_test= X_test, min_df=0.03)
+        X, X_test = add_word_embeddings(X, y, X_test)
+
+        X = X.drop(columns=["text"])
+        X_test = X_test.drop(columns=["text"])
+
+        clf_1 = RandomForestClassifier(**best_config_RF)
+        clf_2 = DecisionTreeClassifier(**best_config_DT)
+
+        clf_1.fit(X, y)
+        y_pred_RF = clf_1.predict(X_test)
+        f1_RF = f1_score(y_test, y_pred_RF, average="macro")
+        print(f"F1 score Random Forest = {f1_RF:.2f}")
+
+        clf_2.fit(X, y)
+        y_pred_DT = clf_2.predict(X_test)
+        f1_DT = f1_score(y_test, y_pred_DT, average="macro")
+        print(f"F1 score DecisionTree = {f1_DT:.2f}")
     
 
+if __name__ == '__main__':
+    params = ['--use_bert','1']
+    main(params)

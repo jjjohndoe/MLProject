@@ -6,6 +6,7 @@ import re
 import numpy as np
 from os import remove
 import argparse
+import matplotlib.pyplot as plt
 
 # Text libraries 
 import regex as re
@@ -20,11 +21,13 @@ from emot.emo_unicode import EMOTICONS_EMO
 from utils import SLANGS, CONTRACTIONS, STOPWORDS
 
 # Import classifier
-from utils import MODELS, MODEL_NAMES, PARAMETERS_TREES
+from utils import MODELS, MODEL_NAMES, PARAMETERS_TREES, PARAMETERS_MPL
 from sklearn.model_selection import ParameterGrid
 from sklearn.metrics import f1_score
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.neural_network import MLPClassifier
+
 
 
 
@@ -62,7 +65,7 @@ def tuning_classifiers(clf, parameters_grid, X_train, y_train, X_val, y_val):
     parameters_grid = ParameterGrid(parameters_grid)
 
     for config in parameters_grid:
-        clf = RandomForestClassifier(**config)
+        clf.set_params(**config)
         clf.fit(X_train, y_train)
         y_pred = clf.predict(X_val)
 
@@ -87,7 +90,8 @@ def tuning_classifiers(clf, parameters_grid, X_train, y_train, X_val, y_val):
 def test_models(X_train : pd.DataFrame, y_train : pd.Series, X_val : pd.DataFrame, y_val : pd.Series ) -> pd.DataFrame:
     # Test 4 models and print results 
    
-    f1_scores = []
+    f1_scores_val= []
+    f1_scores_train = []
 
     for clf, name in zip(MODELS, MODEL_NAMES):
 
@@ -96,25 +100,36 @@ def test_models(X_train : pd.DataFrame, y_train : pd.Series, X_val : pd.DataFram
         start_time = time.time()
         clf.fit(X_train, y_train)
 
-        y_pred =clf.predict(X_val)
-        f1 = f1_score(y_val, y_pred, average='macro')
+        y_pred_val =clf.predict(X_val)
+        f1_val = f1_score(y_val, y_pred_val, average='macro')
+        
+        y_pred_train =clf.predict(X_train)
+        f1_train = f1_score(y_train, y_pred_train, average='macro')
+
         finish_time = time.time()
 
         print(f'Finishing training model: {name}, trained in {finish_time-start_time:.2f}')
 
-        f1_scores.append(f1)
+        f1_scores_train.append(f1_train)
+        f1_scores_val.append(f1_val)
 
-        print(f'Score of {name} model performed: {f1:.2f}\n\n\n')
+        print(f'Score of {name} model performed: {f1_val:.2f}\n\n\n')
 
         col1 = pd.Series(MODEL_NAMES)
-        col2 = pd.Series(f1_scores)
+        col2 = pd.Series(f1_scores_val)
+        col3 = pd.Series(f1_scores_train)
 
         if name == "Random Forest":
-            feature_importances = pd.DataFrame(clf.feature_importances_, index = X_train.columns,  columns=['importance']).sort_values('importance', ascending=False)
+            fig, ax = plt.subplots(figsize=(15,12))
+            feature_importances = pd.DataFrame(clf.feature_importances_, index = X_train.columns,  columns=['importance']).sort_values('importance', ascending=False)[:5]
+            feature_importances.plot(kind = "barh", ylabel ="importances", color = "SeaGreen", grid = True,  ecolor ="black", ax = ax)
+        
+            fig.savefig("FastText.png")
+
             print(feature_importances)
 
-    result = pd.concat([col1, col2], axis = 'columns')
-    result.columns = ['Model Name', 'F1 Score']
+    result = pd.concat([col1, col2, col3], axis = 'columns')
+    result.columns = ['Model Name', 'F1 Score Val', "F1 Score Train"]
     
     print(result)
 
@@ -278,7 +293,7 @@ def clean_text(tweets: pd.DataFrame) -> pd.Series:
 
     # Replace slangs
     tweets["text"] = list(map(lambda x: convert_slangs(x), tweets["text"]))
-
+ 
     # Tokenize text with Tweeter tokenizer
     tweets["text"] = tweets["text"].apply(lambda x: " ".join(tweet_tokenize(x)))
     
@@ -401,8 +416,8 @@ def main(params):
     clf_1 = RandomForestClassifier()
     best_config_RF = tuning_classifiers(clf_1, PARAMETERS_TREES, X_train_test, y_train, X_val_test, y_val)
 
-    clf_2 = DecisionTreeClassifier()
-    best_config_DT = tuning_classifiers(clf_2, PARAMETERS_TREES, X_train_test, y_train,X_val_test, y_val)
+    clf_2 = MLPClassifier()
+    best_config_DT = tuning_classifiers(clf_2, PARAMETERS_MPL, X_train_test, y_train,X_val_test, y_val)
 
     if use_bert:
         print("BERT is not the best pretrained model so I decide not to choose it.")
@@ -419,7 +434,7 @@ def main(params):
         X_test = X_test.drop(columns=["text"])
 
         clf_1 = RandomForestClassifier(**best_config_RF)
-        clf_2 = DecisionTreeClassifier(**best_config_DT)
+        clf_2 = MLPClassifier(**best_config_DT)
 
         clf_1.fit(X, y)
         y_pred_RF = clf_1.predict(X_test)
@@ -429,9 +444,9 @@ def main(params):
         clf_2.fit(X, y)
         y_pred_DT = clf_2.predict(X_test)
         f1_DT = f1_score(y_test, y_pred_DT, average="macro")
-        print(f"F1 score DecisionTree = {f1_DT:.2f}")
+        print(f"F1 score Multi Layer Perceptron = {f1_DT:.2f}")
     
 
 if __name__ == '__main__':
-    params = ['--use_bert','1']
+    params = ['--use_bert','0']
     main(params)

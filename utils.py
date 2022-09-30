@@ -492,6 +492,14 @@ PARAMETERS_TREES = {
     "min_samples_split": [2, 8]  
 }
 
-MODELS = [ RandomForestClassifier(random_state=42), LogisticRegression(random_state=42), DecisionTreeClassifier(random_state=42)]
+PARAMETERS_MPL= {
+    'hidden_layer_sizes': [(50,50,50), (50,100,50), (100,)],
+    'activation': ['tanh', 'relu'],
+    'solver': ['sgd', 'adam'],
+    'alpha': [0.0001, 0.05],
+    'learning_rate': ['constant','adaptive'],
+}
 
-MODEL_NAMES= ["Random Forest", "Logistic Regression", "DecisionTreeClassifier"]
+MODELS = [ RandomForestClassifier(random_state=42), MLPClassifier(random_state=42), DecisionTreeClassifier(random_state=42)]
+
+MODEL_NAMES= ["Random Forest", "MLP Classifier", "DecisionTreeClassifier"]
